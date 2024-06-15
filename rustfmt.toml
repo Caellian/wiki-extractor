@@ -1,0 +1,8 @@
+group_imports = "StdExternalCrate"
+reorder_imports = true
+reorder_impl_items = true
+indent_style = "Block"
+trailing_comma = "Vertical"
+use_field_init_shorthand = true
+use_try_shorthand = true
+edition = "2021"
