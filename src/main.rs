@@ -47,9 +47,12 @@ pub struct Args {
     #[arg(short = 'o', long = "output", default_value = "./dump")]
     pub output: std::path::PathBuf,
 
+    /// Selection of generated files.
+    #[clap(flatten)]
+    pub generator: output::options::GeneratorOptions,
     /// Options for text dump generation.
     #[clap(flatten)]
-    pub text_options: output::options::TextOptions,
+    pub text: output::options::TextOptions,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -60,8 +63,14 @@ fn main() -> anyhow::Result<()> {
     let Args {
         input,
         output,
-        text_options,
+        generator: generator_options,
+        text: text_options,
     } = Args::parse();
+
+    if !generator_options.any() {
+        log::info!("Nothing to do. See `--help` for list of generators.");
+        std::process::exit(0);
+    }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -75,7 +84,7 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
-    let mut gen = DataGenerator::new(output, text_options)?;
+    let mut gen = DataGenerator::new(output, generator_options, text_options)?;
 
     if let Some(updated) = dump.updated {
         log::info!("Dump creation date: {updated}");

@@ -48,7 +48,7 @@ manager of choice) to compile the program.
 All configuration is done through CLI arguments.
 
 Print arguments with:
-```
+```sh
 wiki-extractor --help
 wiki-extractor local --help
 wiki-extractor remote --help
@@ -58,9 +58,9 @@ wiki-extractor remote --help
 
 - Find a closest [mirror](https://dumps.wikimedia.org/mirrors.html) to make the download faster.
   - Used URL should be the part before `/enwiki/latest` part once you locate the dump files.
-- Replace the command below with
+- Replace the URL in command below with your mirror of choice:
 
-```
+```sh
 wiki-extractor remote https://dumps.wikimedia.org/ -L en -w latest -o 
 ```
 

@@ -5,7 +5,6 @@ edition = "2021"
 description = "Wikipedia dump download and cleanup tool"
 authors = ["Tin Švagelj <tin.svagelj@live.com>"]
 license = "GPLv3"
-license-file = "LICENSE"
 
 [dependencies]
 tokio = { version = "1.38", features = ["full"] }
