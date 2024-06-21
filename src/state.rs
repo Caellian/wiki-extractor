@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::data::{FileDescriptor, FileName};
 
+/// A global pointer address of the download tracker.
 static TRACKER: AtomicUsize = AtomicUsize::new(0);
 pub unsafe fn set_tracker_global(tracker: &DownloadTracker) {
     TRACKER

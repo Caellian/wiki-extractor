@@ -117,9 +117,13 @@ fn main() -> anyhow::Result<()> {
                 break;
             };
 
-            let _ = gen.process_document(&mut document);
-
+            let process_result = rt.block_on(gen.process_document(&mut document));
+            
             stream_buffer.clear();
+            if let Err(err) = process_result {
+                log::error!("Error processing '{name}' document: {}", err);
+                break;
+            }
         }
 
         dt.advance_file();

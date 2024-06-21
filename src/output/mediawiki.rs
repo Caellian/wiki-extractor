@@ -1,8 +1,8 @@
-use std::fmt::Write as _;
+use std::{fmt::Write as _, sync::LazyLock};
 
 use parse_wiki_text_2::*;
 
-use super::options::TextOptions;
+use super::{options::TextOptions, processing::{CollapseWhitespace, ProcessingPass as _}};
 
 pub const WIKI_CONFIGURATION: ConfigurationSource = ConfigurationSource {
     category_namespaces: &["category"],
@@ -258,4 +258,74 @@ fn resolve_template(_name: &[Node<'_>], _parameters: &[Parameter<'_>]) -> String
     // TODO: {{lang-fr|anarchiste}}
     // Unicode CLDR has mapping from country codes to short names
     String::new()
+}
+
+/// List of lowercase Wikipedia section titles to skip.
+const SKIP_SECTIONS: &[&str] = &[
+    "see also",        // contains mostly links and no sentences
+    "references",      // not sentences
+    "further reading", // not sentences
+    "external links",  // not sentences
+];
+
+static MAX_SKIP_LEN: LazyLock<usize> = LazyLock::new(|| {
+    SKIP_SECTIONS
+        .iter()
+        .map(|it| it.len())
+        .max()
+        .unwrap_or_default()
+});
+
+pub fn nodes_to_text<'a>(nodes: impl AsRef<[Node<'a>]>, options: &TextOptions) -> String {
+    let mut text = String::with_capacity(2048);
+    let mut skip_section = None;
+    for node in nodes.as_ref() {
+        if let Some(req_level) = skip_section {
+            if let Node::Heading { level, .. } = node {
+                if level <= req_level {
+                    skip_section = None;
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
+
+        let content = node_to_string(&text, node, options);
+        let trimmed = content.trim();
+        if let Node::Heading { level, .. } = node {
+            let trimmed = if options.include_formatting {
+                unsafe {
+                    // SAFETY: '#' char takes up a single byte and
+                    // formatting adds level '#'s, followed by a space
+                    std::str::from_utf8_unchecked(
+                        trimmed.as_bytes().split_at(*level as usize + 1).1,
+                    )
+                }
+            } else {
+                trimmed
+            };
+            // avoid O(3n) lowercase check with O(1) len check
+            if trimmed.len() <= *MAX_SKIP_LEN {
+                let lower = trimmed.to_ascii_lowercase();
+                if SKIP_SECTIONS.contains(&lower.as_str()) {
+                    skip_section = Some(level);
+                    continue;
+                }
+            }
+            if !options.include_headings {
+                continue;
+            }
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        if text.as_bytes().last() == Some(&b'.') {
+            text.push(' ');
+        }
+        text.push_str(&content);
+    }
+    
+    CollapseWhitespace::process(text)
 }

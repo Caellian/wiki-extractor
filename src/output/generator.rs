@@ -3,34 +3,17 @@ use std::{
     fs::File,
     io::Write as _,
     path::{Path, PathBuf},
-    sync::LazyLock,
 };
 
 use itertools::Itertools;
-use parse_wiki_text_2::{Configuration as MediawikiConfig, *};
+use parse_wiki_text_2::Configuration as MediawikiConfig;
 
-use super::processing::{CollapseWhitespace, MapXMLEntities, ProcessingPass as _};
+use super::processing::{MapXMLEntities, ProcessingPass as _};
 use super::{
     mediawiki::{self, WIKI_CONFIGURATION},
     options::TextOptions,
 };
-use crate::dump_data::DocumentContext;
-
-/// List of lowercase Wikipedia section titles to skip.
-const SKIP_SECTIONS: &[&str] = &[
-    "see also",        // contains mostly links and no sentences
-    "references",      // not sentences
-    "further reading", // not sentences
-    "external links",  // not sentences
-];
-
-static MAX_SKIP_LEN: LazyLock<usize> = LazyLock::new(|| {
-    SKIP_SECTIONS
-        .iter()
-        .map(|it| it.len())
-        .max()
-        .unwrap_or_default()
-});
+use crate::dump_data::{DocumentContext, WikiPage};
 
 fn sanitize_escapes(text: impl AsRef<str>, checked: char) -> String {
     let mut result = String::with_capacity(text.as_ref().len() + 16);
@@ -147,7 +130,7 @@ impl DataGenerator {
         }
     }
 
-    pub fn process_document(&mut self, document: &mut DocumentContext) -> std::io::Result<()> {
+    pub async fn process_document(&mut self, document: &mut DocumentContext) -> std::io::Result<()> {
         if self.closed {
             panic!("called process document with closed DataGenerator");
         }
@@ -156,137 +139,91 @@ impl DataGenerator {
             |doc: &DocumentContext| doc.pages.first().map(|it| it.closed).unwrap_or_default();
 
         while has_pages(document) {
-            let mut page = document.pages.remove(0);
-
-            if let Some(redirect) = &page.redirect {
-                if let Some(title) = page.title.value() {
-                    if !self.first_write {
-                        let _ = self.redirects.write_all(b",\n");
-                    }
-                    let _ = self.redirects.write_all(b"  \"");
-                    let escaped = sanitize_escapes(title, '\"');
-                    let _ = self.redirects.write_all(escaped.as_bytes());
-                    let _ = self.redirects.write_all(b"\": \"");
-                    let escaped = sanitize_escapes(redirect, '\"');
-                    let _ = self.redirects.write_all(escaped.as_bytes());
-                    let _ = self.redirects.write_all(b"\"");
-                    continue;
-                }
-            }
-
-            let mut revisions = std::mem::take(&mut page.revisions);
-            let rev = match revisions.last_mut() {
-                Some(it) => it,
-                None => break,
-            };
-
-            if rev.model.value().expect("revision missing model info") != "wikitext"
-                && rev.format.value().expect("revision missing format info") != "text/x-wiki"
-            {
-                // program is outdated/broken
-                log::error!("Unhandled page ({}: {}) model/format: {{ model: \"{}\"; format: \"{}\" }}\n{:#?}",
-                    page.id.value().map(usize::to_string).unwrap_or_default(),
-                    page.title.value().map(String::as_str).unwrap_or(""),
-                    rev.model.value().map(String::as_str).unwrap_or_default(),
-                    rev.format.value().map(String::as_str).unwrap_or_default(),
-                    page
-                );
-                continue;
-            }
-
-            let text = match rev.text.take_value() {
-                Some(it) => MapXMLEntities::process(it),
-                None => continue,
-            };
-
-            let nodes = match self.mediawiki_parser.parse(&text) {
-                Ok(it) => {
-                    if !it.warnings.is_empty() {
-                        let warnings = "- ".to_string()
-                            + it.warnings
-                                .into_iter()
-                                .map(|it| it.message.to_string())
-                                .unique()
-                                .join("\n- ")
-                                .as_ref();
-                        log::warn!(
-                            "Well-formedness issues on ({}: {}):\n{}",
-                            page.id.value().map(usize::to_string).unwrap_or_default(),
-                            page.title.value().map(String::as_str).unwrap_or(""),
-                            warnings
-                        )
-                    }
-                    it.nodes
-                }
-                Err(err) => {
-                    log::error!(
-                        "can't parse page: ({}: {}): {:?}",
-                        page.id.value().map(usize::to_string).unwrap_or_default(),
-                        page.title.value().map(String::as_str).unwrap_or(""),
-                        err
-                    );
-                    continue;
-                }
-            };
-
-            let mut text = String::with_capacity(2048);
-            let mut skip_section = None;
-            for node in nodes {
-                if let Some(req_level) = skip_section {
-                    if let Node::Heading { level, .. } = node {
-                        if level <= req_level {
-                            skip_section = None;
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-
-                let content = mediawiki::node_to_string(&text, &node, &self.text_options);
-                let trimmed = content.trim();
-                if let Node::Heading { level, .. } = node {
-                    let trimmed = if self.text_options.include_formatting {
-                        unsafe {
-                            // SAFETY: '#' char takes up a single byte and
-                            // formatting adds level '#'s, followed by a space
-                            std::str::from_utf8_unchecked(
-                                trimmed.as_bytes().split_at(level as usize + 1).1,
-                            )
-                        }
-                    } else {
-                        trimmed
-                    };
-                    // avoid O(3n) lowercase check with O(1) len check
-                    if trimmed.len() <= *MAX_SKIP_LEN {
-                        let lower = trimmed.to_ascii_lowercase();
-                        if SKIP_SECTIONS.contains(&lower.as_str()) {
-                            skip_section = Some(level);
-                            continue;
-                        }
-                    }
-                    if !self.text_options.include_headings {
-                        self.push_dictionary(trimmed);
-                        continue;
-                    }
-                }
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if text.as_bytes().last() == Some(&b'.') {
-                    text.push(' ');
-                }
-                text.push_str(&content);
-            }
-            text = CollapseWhitespace::process(text);
-            self.push_dictionary(&text);
-
-            let _ = self.text_dump.write_all(text.as_bytes());
+            let page = document.pages.remove(0);
+            self.process_page(page).await;
             self.first_write = false;
         }
 
         Ok(())
+    }
+
+    async fn process_page(&mut self, mut page: WikiPage) {
+        if let Some(redirect) = &page.redirect {
+            if let Some(title) = page.title.value() {
+                if !self.first_write {
+                    let _ = self.redirects.write_all(b",\n");
+                }
+                let _ = self.redirects.write_all(b"  \"");
+                let escaped = sanitize_escapes(title, '\"');
+                let _ = self.redirects.write_all(escaped.as_bytes());
+                let _ = self.redirects.write_all(b"\": \"");
+                let escaped = sanitize_escapes(redirect, '\"');
+                let _ = self.redirects.write_all(escaped.as_bytes());
+                let _ = self.redirects.write_all(b"\"");
+                return;
+            }
+        }
+
+        let mut revisions = std::mem::take(&mut page.revisions);
+        let rev = match revisions.last_mut() {
+            Some(it) => it,
+            None => return,
+        };
+
+        if rev.model.value().map(|it| it.as_str()) != Some("wikitext")
+            && rev.format.value().map(|it| it.as_str()) != Some("text/x-wiki")
+        {
+            // program is outdated/broken
+            log::error!("Unhandled page ({}: {}) model/format: {{ model: \"{}\"; format: \"{}\" }}\n{:#?}",
+                page.id.value().map(usize::to_string).unwrap_or_default(),
+                page.title.value().map(String::as_str).unwrap_or(""),
+                rev.model.value().map(String::as_str).unwrap_or_default(),
+                rev.format.value().map(String::as_str).unwrap_or_default(),
+                page
+            );
+            return;
+        }
+
+        // Cleanup XML encoding of nested XML content
+        let raw_text = match rev.text.take_value() {
+            Some(it) => MapXMLEntities::process(it),
+            None => return,
+        };
+
+        let nodes = match self.mediawiki_parser.parse(&raw_text) {
+            Ok(it) => {
+                if !it.warnings.is_empty() {
+                    let warnings = "- ".to_string()
+                        + it.warnings
+                            .into_iter()
+                            .map(|it| it.message.to_string())
+                            .unique()
+                            .join("\n- ")
+                            .as_ref();
+                    log::warn!(
+                        "Well-formedness issues on ({}: {}):\n{}",
+                        page.id.value().map(usize::to_string).unwrap_or_default(),
+                        page.title.value().map(String::as_str).unwrap_or(""),
+                        warnings
+                    )
+                }
+                it.nodes
+            }
+            Err(err) => {
+                log::error!(
+                    "can't parse page: ({}: {}): {:?}",
+                    page.id.value().map(usize::to_string).unwrap_or_default(),
+                    page.title.value().map(String::as_str).unwrap_or(""),
+                    err
+                );
+                return;
+            }
+        };
+
+        let text = mediawiki::nodes_to_text(&nodes, &self.text_options);
+        self.push_dictionary(&text);
+
+        let _ = self.text_dump.write_all(text.as_bytes());
     }
 
     pub fn finalize(mut self) -> std::io::Result<()> {
