@@ -1,5 +1,8 @@
 # wiki-extractor
 
+[![CI Status](https://img.shields.io/github/actions/workflow/status/Caellian/wiki-extractor/build.yml?style=for-the-badge&logo=githubactions&logoColor=%23fff&label=CI)](https://github.com/Caellian/wiki-extractor/actions/workflows/build.yml)
+[![GPLv3 license](https://img.shields.io/crates/l/contiguous-mem?style=for-the-badge)](https://github.com/Caellian/wiki-extractor#license)
+
 A tool that turns Wikipedia dump files into easily consumable data.
 
 There's already a few tools such as this available in the wild, but none of them
@@ -40,8 +43,7 @@ files/output.
 
 ## Usage
 
-You'll need Rust (installed through [rustup](https://rustup.rs/) or a package
-manager of choice) to compile the program.
+Download latest stable binary from [Releases](https://github.com/Caellian/wiki-extractor/releases).
 
 ### Configuration
 

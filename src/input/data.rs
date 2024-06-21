@@ -3,7 +3,6 @@ use std::{
     fmt::Display,
     fs::File,
     io::{ErrorKind, Seek},
-    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -235,7 +234,7 @@ impl TryFrom<&Path> for FileName {
                             },
                         )
                     })?
-                    .as_bytes()
+                    .as_encoded_bytes()
                     .to_vec(),
             )
             .map_err(|it| std::io::Error::new(ErrorKind::InvalidData, it.utf8_error()))?,

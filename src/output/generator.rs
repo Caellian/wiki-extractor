@@ -2,10 +2,10 @@ use std::{
     collections::HashSet,
     fs::File,
     io::{ErrorKind, Write as _},
-    path::{Path, PathBuf}, sync::Arc, future::IntoFuture,
+    path::{Path, PathBuf}, sync::Arc,
 };
 
-use futures::{Future, future::BoxFuture};
+use futures::future::BoxFuture;
 use itertools::Itertools;
 use parse_wiki_text_2::Configuration as MediawikiConfig;
 
